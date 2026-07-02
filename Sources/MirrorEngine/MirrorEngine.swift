@@ -401,6 +401,9 @@ public class MirrorEngine: ObservableObject {
             backlightOn = dc.backlightOn
         }
 
+        // Apply saved per-device placements in one atomic layout pass
+        relayoutExtendedDisplays()
+
         adbConnected = sessions.contains { $0.adbConnected }
         apkInstallStatus = ""
         status = .running
@@ -564,6 +567,28 @@ public class MirrorEngine: ObservableObject {
                 self.adbConnected = self.sessions.contains { $0.adbConnected }
             }
         }
+    }
+
+    // MARK: - Display Arrangement
+
+    /// Set which side of the built-in display a session's extended display sits on,
+    /// then re-layout all extended displays atomically. Live — no restart needed.
+    public func setPlacement(_ placement: DisplayPlacement, for session: DeviceSession) {
+        session.placement = placement
+        relayoutExtendedDisplays()
+        objectWillChange.send()
+    }
+
+    /// Reposition all extended (non-mirror) virtual displays according to their
+    /// saved placements in a single configuration transaction.
+    public func relayoutExtendedDisplays() {
+        let extended = sessions.compactMap { session -> (CGDirectDisplayID, DisplayPlacement)? in
+            guard session.displayMode == .extended,
+                  let displayID = session.displayManager?.displayID else { return nil }
+            return (displayID, session.placement)
+        }
+        guard !extended.isEmpty else { return }
+        VirtualDisplayManager.layout(displays: extended)
     }
 
     // MARK: - Display Controls

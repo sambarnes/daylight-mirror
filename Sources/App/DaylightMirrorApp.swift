@@ -679,6 +679,20 @@ struct MirrorMenuView: View {
             }
         }
 
+        // Devices: one row per connected device, with placement control for
+        // extended displays (which side of the Mac's screen they sit on).
+        if engine.sessions.count > 1 || engine.sessions.contains(where: { $0.displayMode == .extended }) {
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Displays")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                ForEach(engine.sessions) { session in
+                    deviceRow(session)
+                }
+            }
+        }
+
         // DC-1 display controls (brightness, warmth)
         if hasDC1 {
             Divider()
@@ -909,7 +923,7 @@ struct MirrorMenuView: View {
                 Text(session.device.deviceFamily.rawValue)
                     .font(.caption.weight(.medium))
                 HStack(spacing: 4) {
-                    Text(session.resolution.rawValue)
+                    Text(session.device.serial)
                     Text("·")
                     Text(session.displayMode == .mirror ? "Mirror" : "Extended")
                 }
@@ -918,6 +932,23 @@ struct MirrorMenuView: View {
             }
 
             Spacer()
+
+            // Placement picker — which side of the Mac's display this one sits on.
+            // Only meaningful for extended displays (mirror follows the built-in).
+            if session.displayMode == .extended {
+                Picker("", selection: Binding(
+                    get: { session.placement },
+                    set: { engine.setPlacement($0, for: session) }
+                )) {
+                    Image(systemName: "arrow.left.square").tag(DisplayPlacement.left)
+                    Image(systemName: "arrow.right.square").tag(DisplayPlacement.right)
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.mini)
+                .labelsHidden()
+                .frame(width: 70)
+                .help("Position this display to the left or right of the Mac's screen")
+            }
 
             Circle()
                 .fill(session.clientCount > 0 ? Color.primary : Color.secondary)

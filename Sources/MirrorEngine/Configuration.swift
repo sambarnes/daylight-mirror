@@ -89,6 +89,18 @@ public enum DisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// Which side of the built-in display an extended virtual display sits on.
+/// Persisted per device serial so each Daylight remembers its position.
+public enum DisplayPlacement: String, CaseIterable, Identifiable {
+    case left  = "left"
+    case right = "right"
+
+    public var id: String { rawValue }
+    public var label: String {
+        switch self { case .left: "Left"; case .right: "Right" }
+    }
+}
+
 // Protocol constants
 let MAGIC_FRAME: [UInt8] = [0xDA, 0x7E]
 let MAGIC_CMD: [UInt8] = [0xDA, 0x7F]

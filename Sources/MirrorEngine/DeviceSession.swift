@@ -17,6 +17,16 @@ public class DeviceSession: Identifiable {
     /// Host port for this session's touch-input server. Each session gets its own
     /// port (derived from its stream port) so multiple devices don't collide on 8892.
     public var inputPort: UInt16 { INPUT_PORT + (port - TCP_PORT) }
+
+    /// Which side of the built-in display this session's extended display sits on.
+    /// Persisted per device serial so each Daylight remembers its position.
+    public var placement: DisplayPlacement {
+        get {
+            let saved = UserDefaults.standard.string(forKey: "placement:\(device.serial)") ?? ""
+            return DisplayPlacement(rawValue: saved) ?? .right
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "placement:\(device.serial)") }
+    }
     public let resolution: DisplayResolution
     public let displayMode: DisplayMode
     public let device: ConnectedDevice
@@ -71,7 +81,7 @@ public class DeviceSession: Identifiable {
             // mirror-mode primary session is untouched), then position side-by-side.
             displayManager?.breakMirrorWithBuiltIn()
             try? await Task.sleep(for: .milliseconds(500))
-            displayManager?.positionNextToBuiltIn()
+            displayManager?.positionNextToBuiltIn(placement: placement)
             NSLog("[Session:%@] Extended display mode — second screen", device.serial)
         }
         try? await Task.sleep(for: .seconds(1))

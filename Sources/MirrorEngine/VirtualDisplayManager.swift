@@ -60,17 +60,19 @@ class VirtualDisplayManager {
         print("Virtual display configured: \(width)x\(height) \(modeLabel) @ 60Hz")
     }
 
-    /// Position this virtual display to the right of all other online displays,
-    /// so extended displays don't overlap. Used in extend mode. With multiple
-    /// virtual displays (e.g. two Daylights), each one lands to the right of the
-    /// previous, forming a horizontal strip: [built-in][virtual 1][virtual 2].
-    func positionNextToBuiltIn() {
+    /// Position this virtual display beside all other online displays on the
+    /// given side, so extended displays don't overlap. Used in extend mode.
+    /// With multiple virtual displays on the same side (e.g. two Daylights),
+    /// each one lands beyond the previous, forming a horizontal strip:
+    /// [virtual 2][virtual 1][built-in] or [built-in][virtual 1][virtual 2].
+    func positionNextToBuiltIn(placement: DisplayPlacement = .right) {
         var displayIDs = [CGDirectDisplayID](repeating: 0, count: 32)
         var displayCount: UInt32 = 0
         CGGetOnlineDisplayList(32, &displayIDs, &displayCount)
 
         var builtInID: CGDirectDisplayID?
         var rightmostEdge: CGFloat = 0
+        var leftmostEdge: CGFloat = 0
         var originY: CGFloat = 0
         for i in 0..<Int(displayCount) {
             let id = displayIDs[i]
@@ -82,9 +84,14 @@ class VirtualDisplayManager {
             guard id != displayID, CGDisplayMirrorsDisplay(id) == kCGNullDirectDisplay else { continue }
             let bounds = CGDisplayBounds(id)
             rightmostEdge = max(rightmostEdge, bounds.origin.x + bounds.size.width)
+            leftmostEdge = min(leftmostEdge, bounds.origin.x)
         }
 
         guard let masterID = builtInID else { return }
+
+        // Logical width in points: HiDPI displays render at half the pixel size.
+        let logicalWidth = CGDisplayBounds(displayID).size.width
+        let originX: CGFloat = placement == .right ? rightmostEdge : leftmostEdge - logicalWidth
 
         var configRef: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else { return }
@@ -92,13 +99,59 @@ class VirtualDisplayManager {
         // Keep the built-in at (0,0) — macOS treats the display at origin (0,0)
         // as the primary (menu bar + dock).
         CGConfigureDisplayOrigin(config, masterID, 0, 0)
-        CGConfigureDisplayOrigin(config, displayID, Int32(rightmostEdge), Int32(originY))
+        CGConfigureDisplayOrigin(config, displayID, Int32(originX), Int32(originY))
 
         guard CGCompleteDisplayConfiguration(config, .forSession) == .success else {
             print("WARNING: Failed to position virtual display \(displayID)")
             return
         }
-        print("Positioned virtual display \(displayID) at x=\(Int(rightmostEdge))")
+        print("Positioned virtual display \(displayID) at x=\(Int(originX)) (\(placement.rawValue))")
+    }
+
+    /// Re-layout multiple extended displays in a single configuration transaction.
+    /// Places each display beside the built-in on its chosen side, stacking outward
+    /// in list order. Doing this atomically avoids ordering artifacts when moving a
+    /// display from one side to the other while others are already positioned.
+    static func layout(displays: [(displayID: CGDirectDisplayID, placement: DisplayPlacement)]) {
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: 32)
+        var displayCount: UInt32 = 0
+        CGGetOnlineDisplayList(32, &displayIDs, &displayCount)
+
+        var builtInID: CGDirectDisplayID?
+        for i in 0..<Int(displayCount) {
+            if CGDisplayIsBuiltin(displayIDs[i]) != 0 {
+                builtInID = displayIDs[i]
+                break
+            }
+        }
+        guard let masterID = builtInID else { return }
+
+        // Built-in anchored at (0,0); cursors grow outward from its edges.
+        var rightCursor = CGDisplayBounds(masterID).size.width
+        var leftCursor: CGFloat = 0
+
+        var configRef: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else { return }
+
+        CGConfigureDisplayOrigin(config, masterID, 0, 0)
+        for (id, placement) in displays {
+            let width = CGDisplayBounds(id).size.width
+            let originX: CGFloat
+            switch placement {
+            case .right:
+                originX = rightCursor
+                rightCursor += width
+            case .left:
+                leftCursor -= width
+                originX = leftCursor
+            }
+            CGConfigureDisplayOrigin(config, id, Int32(originX), 0)
+            print("Layout: display \(id) → x=\(Int(originX)) (\(placement.rawValue))")
+        }
+
+        if CGCompleteDisplayConfiguration(config, .forSession) != .success {
+            print("WARNING: Failed to apply multi-display layout")
+        }
     }
 
     /// Break any mirror relationship between this virtual display and the built-in
