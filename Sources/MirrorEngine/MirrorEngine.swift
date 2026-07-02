@@ -343,9 +343,16 @@ public class MirrorEngine: ObservableObject {
             )
             await startSession(session, wsServer: wsServer)
         } else {
-            // Sort: DC-1 first (gets primary port 8888), then other devices.
-            // This ensures stable port assignment regardless of USB enumeration order.
-            let sorted = devices.sorted { a, _ in a.deviceFamily == .daylightDC1 }
+            // Sort: DC-1s first (primary gets port 8888), then other devices,
+            // with serial as tiebreaker. This ensures stable, deterministic port
+            // assignment regardless of USB enumeration order — important with
+            // two identical Daylights so each keeps the same display position.
+            let sorted = devices.sorted { a, b in
+                let aDC1 = a.deviceFamily == .daylightDC1
+                let bDC1 = b.deviceFamily == .daylightDC1
+                if aDC1 != bDC1 { return aDC1 }
+                return a.serial < b.serial
+            }
             var port = TCP_PORT
             for (_, device) in sorted.enumerated() {
                 let res = resolutionForDevice(device)
@@ -367,11 +374,17 @@ public class MirrorEngine: ObservableObject {
             }
         }
 
-        // Display controller — attach to DC-1 session's TCP server for brightness/warmth
-        if let dc1Session = sessions.first(where: { $0.device.deviceFamily == .daylightDC1 }),
-           let tcp = dc1Session.tcpServer {
-            let serial = dc1Session.device.serial != "none" ? dc1Session.device.serial : nil
-            let dc = DisplayController(tcpServer: tcp, deviceSerial: serial)
+        // Display controller — attach to all DC-1 sessions so brightness/warmth
+        // controls apply to every connected Daylight simultaneously.
+        let dc1Targets: [DisplayController.Target] = sessions
+            .filter { $0.device.deviceFamily == .daylightDC1 }
+            .compactMap { session in
+                guard let tcp = session.tcpServer else { return nil }
+                let serial = session.device.serial != "none" ? session.device.serial : nil
+                return DisplayController.Target(tcpServer: tcp, deviceSerial: serial)
+            }
+        if !dc1Targets.isEmpty {
+            let dc = DisplayController(targets: dc1Targets)
             dc.onBrightnessChanged = { [weak self] val in
                 DispatchQueue.main.async { self?.brightness = val }
             }
@@ -540,7 +553,7 @@ public class MirrorEngine: ObservableObject {
                     let inputOK = ADBBridge.setupReverseTunnel(
                         serial: session.device.serial,
                         devicePort: INPUT_PORT,
-                        hostPort: INPUT_PORT
+                        hostPort: session.inputPort
                     )
                     if !inputOK { NSLog("[ADB] Input tunnel failed for %@ — touch disabled", session.device.serial) }
                     ADBBridge.launchApp(serial: session.device.serial)

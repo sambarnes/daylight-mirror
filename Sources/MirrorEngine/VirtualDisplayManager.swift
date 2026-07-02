@@ -60,6 +60,89 @@ class VirtualDisplayManager {
         print("Virtual display configured: \(width)x\(height) \(modeLabel) @ 60Hz")
     }
 
+    /// Position this virtual display to the right of all other online displays,
+    /// so extended displays don't overlap. Used in extend mode. With multiple
+    /// virtual displays (e.g. two Daylights), each one lands to the right of the
+    /// previous, forming a horizontal strip: [built-in][virtual 1][virtual 2].
+    func positionNextToBuiltIn() {
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: 32)
+        var displayCount: UInt32 = 0
+        CGGetOnlineDisplayList(32, &displayIDs, &displayCount)
+
+        var builtInID: CGDirectDisplayID?
+        var rightmostEdge: CGFloat = 0
+        var originY: CGFloat = 0
+        for i in 0..<Int(displayCount) {
+            let id = displayIDs[i]
+            if CGDisplayIsBuiltin(id) != 0 {
+                builtInID = id
+                originY = CGDisplayBounds(id).origin.y
+            }
+            // Skip ourselves and any display mirroring another (followers share bounds)
+            guard id != displayID, CGDisplayMirrorsDisplay(id) == kCGNullDirectDisplay else { continue }
+            let bounds = CGDisplayBounds(id)
+            rightmostEdge = max(rightmostEdge, bounds.origin.x + bounds.size.width)
+        }
+
+        guard let masterID = builtInID else { return }
+
+        var configRef: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else { return }
+
+        // Keep the built-in at (0,0) — macOS treats the display at origin (0,0)
+        // as the primary (menu bar + dock).
+        CGConfigureDisplayOrigin(config, masterID, 0, 0)
+        CGConfigureDisplayOrigin(config, displayID, Int32(rightmostEdge), Int32(originY))
+
+        guard CGCompleteDisplayConfiguration(config, .forSession) == .success else {
+            print("WARNING: Failed to position virtual display \(displayID)")
+            return
+        }
+        print("Positioned virtual display \(displayID) at x=\(Int(rightmostEdge))")
+    }
+
+    /// Break any mirror relationship between this virtual display and the built-in
+    /// display. macOS may auto-mirror a newly created virtual display with the
+    /// built-in, which makes extend mode behave like mirror mode. Unlike
+    /// unmirrorBuiltInDisplay(), this only touches relationships involving THIS
+    /// display — so a primary session running in mirror mode is left intact.
+    func breakMirrorWithBuiltIn() {
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: 32)
+        var displayCount: UInt32 = 0
+        CGGetOnlineDisplayList(32, &displayIDs, &displayCount)
+
+        var builtInID: CGDirectDisplayID?
+        for i in 0..<Int(displayCount) {
+            if CGDisplayIsBuiltin(displayIDs[i]) != 0 {
+                builtInID = displayIDs[i]
+                break
+            }
+        }
+
+        let builtInMirrorsSelf = builtInID.map { CGDisplayMirrorsDisplay($0) == displayID } ?? false
+        let selfMirrorsSomething = CGDisplayMirrorsDisplay(displayID) != kCGNullDirectDisplay
+        guard builtInMirrorsSelf || selfMirrorsSomething else {
+            print("Virtual display \(displayID): no mirror relationship to break")
+            return
+        }
+
+        var configRef: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else { return }
+
+        if builtInMirrorsSelf, let builtIn = builtInID {
+            CGConfigureDisplayMirrorOfDisplay(config, builtIn, kCGNullDirectDisplay)
+        }
+        if selfMirrorsSomething {
+            CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
+        }
+
+        guard CGCompleteDisplayConfiguration(config, .forSession) == .success else {
+            print("WARNING: Failed to break mirror for virtual display \(displayID)")
+            return
+        }
+        print("Broke auto-mirror: virtual display \(displayID) is now independent")
+    }
+
     func mirrorBuiltInDisplay() {
         var displayIDs = [CGDirectDisplayID](repeating: 0, count: 32)
         var displayCount: UInt32 = 0

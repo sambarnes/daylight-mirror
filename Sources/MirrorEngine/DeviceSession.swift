@@ -14,6 +14,9 @@ import AppKit
 public class DeviceSession: Identifiable {
     public var id: String { device.serial }
     public let port: UInt16
+    /// Host port for this session's touch-input server. Each session gets its own
+    /// port (derived from its stream port) so multiple devices don't collide on 8892.
+    public var inputPort: UInt16 { INPUT_PORT + (port - TCP_PORT) }
     public let resolution: DisplayResolution
     public let displayMode: DisplayMode
     public let device: ConnectedDevice
@@ -63,6 +66,12 @@ public class DeviceSession: Identifiable {
         if displayMode == .mirror {
             displayManager?.mirrorBuiltInDisplay()
         } else {
+            // macOS may auto-mirror the new virtual display with the built-in.
+            // Explicitly break that relationship (only for THIS display, so a
+            // mirror-mode primary session is untouched), then position side-by-side.
+            displayManager?.breakMirrorWithBuiltIn()
+            try? await Task.sleep(for: .milliseconds(500))
+            displayManager?.positionNextToBuiltIn()
             NSLog("[Session:%@] Extended display mode — second screen", device.serial)
         }
         try? await Task.sleep(for: .seconds(1))
@@ -88,9 +97,11 @@ public class DeviceSession: Identifiable {
         tcp.start()
         tcpServer = tcp
 
-        // 5. Input server — receives touch events from the device, injects as Mac cursor
+        // 5. Input server — receives touch events from the device, injects as Mac cursor.
+        // Each session binds its own host port; the ADB reverse tunnel maps the
+        // device's fixed INPUT_PORT to it.
         do {
-            let input = try InputServer(port: INPUT_PORT, targetDisplayID: displayManager!.displayID)
+            let input = try InputServer(port: inputPort, targetDisplayID: displayManager!.displayID)
             input.start()
             inputServer = input
         } catch {
@@ -152,7 +163,7 @@ public class DeviceSession: Identifiable {
             if tunnelOK {
                 NSLog("[Session:%@] Stream tunnel established (device:8888 → host:%d)", serial, port)
                 // Input tunnel — non-blocking; touch disabled if this fails but mirroring continues
-                let inputTunnelOK = ADBBridge.setupReverseTunnel(serial: serial, devicePort: INPUT_PORT, hostPort: INPUT_PORT)
+                let inputTunnelOK = ADBBridge.setupReverseTunnel(serial: serial, devicePort: INPUT_PORT, hostPort: inputPort)
                 if !inputTunnelOK {
                     NSLog("[Session:%@] WARNING: Input tunnel failed — touch disabled", serial)
                 }

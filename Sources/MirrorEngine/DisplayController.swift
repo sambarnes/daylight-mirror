@@ -8,8 +8,18 @@
 import AppKit
 
 class DisplayController {
-    let tcpServer: TCPServer
-    let deviceSerial: String?  // For targeted ADB commands
+    /// A controllable device: its TCP server (for brightness commands sent over
+    /// the stream) and optional ADB serial (for warmth, which needs shell access).
+    struct Target {
+        let tcpServer: TCPServer
+        let deviceSerial: String?
+    }
+
+    /// All targets — commands are broadcast so multiple Daylights stay in sync.
+    let targets: [Target]
+    /// Primary target, used for reading initial values.
+    var tcpServer: TCPServer { targets[0].tcpServer }
+    var deviceSerial: String? { targets[0].deviceSerial }
     var currentBrightness: Int = 128
     var currentWarmth: Int = 128
     var backlightOn: Bool = true
@@ -22,8 +32,28 @@ class DisplayController {
     var onBacklightChanged: ((Bool) -> Void)?
 
     init(tcpServer: TCPServer, deviceSerial: String? = nil) {
-        self.tcpServer = tcpServer
-        self.deviceSerial = deviceSerial
+        self.targets = [Target(tcpServer: tcpServer, deviceSerial: deviceSerial)]
+    }
+
+    init(targets: [Target]) {
+        precondition(!targets.isEmpty, "DisplayController needs at least one target")
+        self.targets = targets
+    }
+
+    /// Send a brightness command to every connected device.
+    private func broadcastBrightness(_ value: UInt8) {
+        for target in targets {
+            target.tcpServer.sendCommand(CMD_BRIGHTNESS, value: value)
+        }
+    }
+
+    /// Set warmth on every connected device via adb shell.
+    private func broadcastWarmth(_ value: Int) {
+        DispatchQueue.global().async { [targets] in
+            for target in targets {
+                ADBBridge.setSystemSetting("screen_brightness_amber_rate", value: value, serial: target.deviceSerial)
+            }
+        }
     }
 
     func start() {
@@ -92,7 +122,7 @@ class DisplayController {
         currentBrightness = Self.brightnessFromSliderPos(newPos)
         savedBrightness = max(currentBrightness, 1)
         backlightOn = currentBrightness > 0
-        tcpServer.sendCommand(CMD_BRIGHTNESS, value: UInt8(currentBrightness))
+        broadcastBrightness(UInt8(currentBrightness))
         onBrightnessChanged?(currentBrightness)
         onBacklightChanged?(backlightOn)
         print("[Display] Brightness -> \(currentBrightness)/255")
@@ -102,7 +132,7 @@ class DisplayController {
         currentBrightness = max(0, min(255, value))
         savedBrightness = max(currentBrightness, 1)
         backlightOn = currentBrightness > 0
-        tcpServer.sendCommand(CMD_BRIGHTNESS, value: UInt8(currentBrightness))
+        broadcastBrightness(UInt8(currentBrightness))
         onBrightnessChanged?(currentBrightness)
         onBacklightChanged?(backlightOn)
     }
@@ -117,18 +147,14 @@ class DisplayController {
         currentWarmth = max(0, min(255, currentWarmth + delta))
         // Warmth goes via adb shell — screen_brightness_amber_rate is a Daylight-protected
         // setting that only the shell user can write, not a regular Android app.
-        DispatchQueue.global().async { [warmth = currentWarmth, serial = deviceSerial] in
-            ADBBridge.setSystemSetting("screen_brightness_amber_rate", value: warmth, serial: serial)
-        }
+        broadcastWarmth(currentWarmth)
         onWarmthChanged?(currentWarmth)
         print("[Display] Warmth -> \(currentWarmth)/255")
     }
 
     func setWarmth(_ value: Int) {
         currentWarmth = max(0, min(255, value))
-        DispatchQueue.global().async { [warmth = currentWarmth, serial = deviceSerial] in
-            ADBBridge.setSystemSetting("screen_brightness_amber_rate", value: warmth, serial: serial)
-        }
+        broadcastWarmth(currentWarmth)
         onWarmthChanged?(currentWarmth)
         print("[Display] Warmth -> \(currentWarmth)/255")
     }
@@ -138,14 +164,14 @@ class DisplayController {
             savedBrightness = max(currentBrightness, 1)
             currentBrightness = 0
             backlightOn = false
-            tcpServer.sendCommand(CMD_BRIGHTNESS, value: 0)
+            broadcastBrightness(0)
             onBrightnessChanged?(0)
             onBacklightChanged?(false)
             print("[Display] Backlight OFF")
         } else {
             currentBrightness = savedBrightness
             backlightOn = true
-            tcpServer.sendCommand(CMD_BRIGHTNESS, value: UInt8(currentBrightness))
+            broadcastBrightness(UInt8(currentBrightness))
             onBrightnessChanged?(currentBrightness)
             onBacklightChanged?(true)
             print("[Display] Backlight ON -> \(currentBrightness)/255")
