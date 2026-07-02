@@ -18,6 +18,9 @@ public class DeviceSession: Identifiable {
     /// port (derived from its stream port) so multiple devices don't collide on 8892.
     public var inputPort: UInt16 { INPUT_PORT + (port - TCP_PORT) }
 
+    /// The CoreGraphics display ID of this session's virtual display (nil before start).
+    public var virtualDisplayID: CGDirectDisplayID? { displayManager?.displayID }
+
     /// Which side of the built-in display this session's extended display sits on.
     /// Persisted per device serial so each Daylight remembers its position.
     public var placement: DisplayPlacement {

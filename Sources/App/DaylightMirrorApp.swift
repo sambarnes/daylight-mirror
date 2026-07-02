@@ -14,6 +14,7 @@ import MirrorEngine
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let engine = MirrorEngine()
     var setupWindow: NSWindow?
+    var arrangeWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("[AppDelegate] didFinishLaunching")
@@ -52,6 +53,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         setupWindow = window
     }
 
+    func showArrangeWindow() {
+        if let existing = arrangeWindow {
+            existing.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let view = ArrangementView(engine: engine)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Arrange Displays"
+        window.contentView = NSHostingView(rootView: view)
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.level = .floating  // stay visible while user glances between screens
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        arrangeWindow = window
+    }
+
     func dismissSetupWindow() {
         setupWindow?.close()
         setupWindow = nil
@@ -74,7 +98,11 @@ struct DaylightMirrorApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MirrorMenuView(engine: delegate.engine, showSetup: { delegate.showSetupWindow() })
+            MirrorMenuView(
+                engine: delegate.engine,
+                showSetup: { delegate.showSetupWindow() },
+                showArrange: { delegate.showArrangeWindow() }
+            )
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "display")
@@ -439,6 +467,7 @@ struct SetupView: View {
 struct MirrorMenuView: View {
     @ObservedObject var engine: MirrorEngine
     var showSetup: () -> Void
+    var showArrange: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -684,9 +713,19 @@ struct MirrorMenuView: View {
         if engine.sessions.count > 1 || engine.sessions.contains(where: { $0.displayMode == .extended }) {
             Divider()
             VStack(alignment: .leading, spacing: 4) {
-                Text("Displays")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.tertiary)
+                HStack {
+                    Text("Displays")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button(action: showArrange) {
+                        Label("Arrange…", systemImage: "rectangle.3.group")
+                            .font(.system(size: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Drag-and-drop display arrangement")
+                }
                 ForEach(engine.sessions) { session in
                     deviceRow(session)
                 }
@@ -948,6 +987,23 @@ struct MirrorMenuView: View {
                 .labelsHidden()
                 .frame(width: 70)
                 .help("Position this display to the left or right of the Mac's screen")
+
+                // Rotate 90° — swaps landscape↔portrait for this device only.
+                // Requires a restart because the virtual display must be recreated
+                // at the rotated resolution; the tablet app follows automatically.
+                Button(action: {
+                    engine.setRotated(!engine.isRotated(session.device.serial),
+                                      serial: session.device.serial)
+                    restartEngine()
+                }) {
+                    Image(systemName: "rotate.right")
+                        .font(.caption)
+                        .foregroundStyle(session.resolution.isPortrait ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(session.resolution.isPortrait
+                      ? "Portrait — click to switch to landscape (restarts mirror)"
+                      : "Landscape — click to switch to portrait (restarts mirror)")
             }
 
             Circle()

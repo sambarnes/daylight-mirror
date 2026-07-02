@@ -448,10 +448,24 @@ public class MirrorEngine: ObservableObject {
     }
 
     /// Pick the right resolution for a detected device based on its family.
-    /// Resolution for a given device. Currently all devices use the same resolution.
-    /// Future: auto-detect panel size and generate appropriate presets.
+    /// Applies the per-device rotation override: if the device is marked rotated,
+    /// the landscape/portrait counterpart of the global preset is used.
     private func resolutionForDevice(_ device: ConnectedDevice) -> DisplayResolution {
-        return resolution
+        return isRotated(device.serial) ? resolution.rotated : resolution
+    }
+
+    /// Whether a device's display is rotated 90° relative to the global
+    /// resolution preset (landscape ↔ portrait). Persisted per serial.
+    public func isRotated(_ serial: String) -> Bool {
+        UserDefaults.standard.bool(forKey: "rotated:\(serial)")
+    }
+
+    /// Mark a device as rotated (or not). Takes effect on the next start —
+    /// callers should restart the engine to apply. The Android app follows
+    /// automatically: it switches orientation based on incoming frame dimensions.
+    public func setRotated(_ rotated: Bool, serial: String) {
+        UserDefaults.standard.set(rotated, forKey: "rotated:\(serial)")
+        NSLog("[MirrorEngine] %@ rotation → %@", serial, rotated ? "portrait-swap" : "default")
     }
 
     /// Aggregate stats from all sessions for the UI.

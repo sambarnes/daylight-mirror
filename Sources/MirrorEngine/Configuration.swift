@@ -68,6 +68,21 @@ public enum DisplayResolution: String, CaseIterable, Identifiable {
         default: false
         }
     }
+
+    /// The same preset rotated 90° — landscape ↔ portrait counterpart.
+    /// Used for per-device rotation in extend mode.
+    public var rotated: DisplayResolution {
+        switch self {
+        case .cozy: .portraitCozy
+        case .comfortable: .portraitComfortable
+        case .balanced: .portraitBalanced
+        case .sharp: .portraitSharp
+        case .portraitCozy: .cozy
+        case .portraitComfortable: .comfortable
+        case .portraitBalanced: .balanced
+        case .portraitSharp: .sharp
+        }
+    }
 }
 
 /// Device families for connected Android devices.
